@@ -37,7 +37,7 @@
         "message": "Válasszon terméket"
     },
     "choose_product_description": {
-        "message": "Válassza ki a termékeket, melyekhez nyitott kérdéseket akar keresni"
+        "message": "Válassza ki, hogy mely termékekhez akar nyitott kérdéseket keresni"
     },
     "open_tab": {
         "message": "Megnyitás"
@@ -57,8 +57,20 @@
     "product_firefox-enterprise": {
         "message": "Vállalati Firefox"
     },
+    "product_firefox-preview": {
+        "message": "Firefox Preview"
+    },
+    "product_firefox-private-network-vpn": {
+        "message": "Mozilla VPN"
+    },
+    "product_hubs": {
+        "message": "Hubs"
+    },
     "congratulations": {
-        "message": "Gratulálunk! Az összes kérdés megválaszolva!"
+        "message": "Gratulálunk!"
+    },
+    "no_questions_found": {
+        "message": "Az összes kérdés megválaszolva!"
     },
     "refresh": {
         "message": "Frissítés"
@@ -69,8 +81,11 @@
     "show_notifications": {
         "message": "Böngészőértesítések megjelenítése"
     },
+    "open_in_new_tab": {
+        "message": "Open questions in new tab"
+    },
     "description_notifications": {
-        "message": "Meghatározza, hogy fog-e felugró értesíteseket kapni, ha új kérdések találhatók"
+        "message": "Meghatározza, hogy kap-e felugró értesíteseket, ha új kérdések vannak"
     },
     "notification_title_single": {
         "message": "új kérdés találva!"
@@ -105,6 +120,9 @@
     "general": {
         "message": " Általános"
     },
+    "credits": {
+        "message": " Credits"
+    },
     "default_time": {
         "message": "15 (alapértelmezett)"
     },
@@ -124,6 +142,6 @@
         "message": "Világos"
     },
     "never": {
-        "message": "Never"
+        "message": "Soha"
     }
 }

@@ -2,12 +2,14 @@
 let frequencySeekNewQuestions, 
     locale, 
     showNotifications, 
+    openNewTab,
     onlySidebar, 
     product,
     theme,
     isMobile;
 let numberOfAPIRequests = 0;
 let apiFromPopup = false;
+let isSidebarOpen = false;
 
 // Detect operating system
 let detectOS = browser.runtime.getPlatformInfo();
@@ -21,6 +23,12 @@ questionList.then(dataLoaded);
 browser.alarms.onAlarm.addListener(callAPI);
 browser.runtime.onMessage.addListener(handleMessage);
 browser.browserAction.onClicked.addListener(openWindow);
+browser.runtime.onConnect.addListener((port) => {
+    isSidebarOpen = true;
+    port.onDisconnect.addListener(() => {
+        isSidebarOpen = false;
+    });
+});
 //browser.notifications.onClicked.addListener(openWindow); API limitation
 
 /**
@@ -30,7 +38,7 @@ browser.browserAction.onClicked.addListener(openWindow);
  */
 function settingsUpdated(changes, area) {
     let changedItems = Object.keys(changes);
-    for (let item of changedItems) {
+    for (item of changedItems) {
         switch (item) {
             case 'frequencySeekNewQuestions':
                 frequencySeekNewQuestions = changes[item].newValue;
@@ -38,10 +46,21 @@ function settingsUpdated(changes, area) {
                 return;
             case 'chooseLanguage':
                 locale = changes[item].newValue;
+                browser.runtime.sendMessage({
+                    task: 'toggle_locale_labels',
+                    multiple: locale.length != 1
+                });
                 callAPI();
                 return;
             case 'showNotifications':
                 showNotifications = changes[item].newValue;
+                return;
+            case 'openNewTab':
+                openNewTab = changes[item].newValue;
+                browser.runtime.sendMessage({
+                    task: 'update_open_in_new_tab',
+                    value: openNewTab
+                });
                 return;
             case 'chooseProduct':
                 product = changes[item].newValue;
@@ -82,7 +101,11 @@ function toggleSidebarPreference() {
  */
 function openWindow() {
     if (onlySidebar) {
-        browser.sidebarAction.open();
+        if (isSidebarOpen) {
+            browser.sidebarAction.close();
+        } else {
+            browser.sidebarAction.open();
+        }
     } else if (isMobile) {
         browser.tabs.create({
             url: '/html/popup.html?view=mobile'
@@ -153,10 +176,13 @@ function handleMessage(message, sender, sendResponse) {
  */
 function dataLoaded(data) {
     // Load question list
-    if (data.questions) {
+    if (data.questions && data.questionVersion == 1) {
         questionList = data.questions;
     } else {
         questionList = [];
+        browser.storage.local.set({
+            questionVersion: 1
+        });
     }
 
     // Load question check frequency
@@ -171,7 +197,12 @@ function dataLoaded(data) {
 
     // Load locale
     if (typeof data.chooseLanguage === 'undefined' || data.chooseLanguage === null) {
-        locale = "en-US";
+        locale = ["en-US"];
+        browser.storage.local.set({
+            chooseLanguage: locale
+        });
+    } else if (typeof data.chooseLanguage === 'string') {
+        locale = [data.chooseLanguage];
         browser.storage.local.set({
             chooseLanguage: locale
         });
@@ -189,9 +220,19 @@ function dataLoaded(data) {
         showNotifications = data.showNotifications;
     }
 
+    // Load open in new tab setting
+    if (typeof data.openNewTab === 'undefined' || data.openNewTab === null) {
+        openNewTab = true;
+        browser.storage.local.set({
+            openNewTab: openNewTab
+        });
+    } else {
+        openNewTab = data.openNewTab;
+    }
+
     // Load product watch list
     if (typeof data.chooseProduct === 'undefined' || data.chooseProduct === null) {
-        product = "Firefox";
+        product = ["Firefox"];
         browser.storage.local.set({
             chooseProduct: product
         });
@@ -230,12 +271,12 @@ function dataLoaded(data) {
  */
 function callAPI() {
     // API request settings
-    let is_solved = 'false';
-    let is_spam = 'false';
-    let is_locked = 'false';
-    let is_taken = 'false';
-    let is_archived = 'false';
-    let max_answers = '0';
+    const is_solved = 'false';
+    const is_spam = 'false';
+    const is_locked = 'false';
+    const is_taken = 'false';
+    const is_archived = 'false';
+    const max_answers = '0';
 
     // Tell window(s) that API is loading
     browser.runtime.sendMessage({
@@ -243,26 +284,33 @@ function callAPI() {
     });
 
     // Send requests to SUMO API
-    let requests = Array(product.length);
-    numberOfAPIRequests = product.length;
+    numberOfAPIRequests = product.length * locale.length;
+    let requestCounter = 0;
+    const requests = new Array(numberOfAPIRequests);
 
     for (i = 0; i < product.length; i++) {
-        requests[i] = new XMLHttpRequest();
-        let requestAPI = 'https://support.mozilla.org/api/2/question/?format=json&ordering=-id&is_solved=' + is_solved + '&is_spam=' + is_spam + '&is_locked=' + is_locked + '&product=' + product[i] + '&is_taken=' + is_taken + '&is_archived=' + is_archived + '&locale=' + locale + '&num_answers=' + max_answers;
-        requests[i].open('GET', requestAPI, true);
-        requests[i].responseType = 'json';
-        requests[i].send();
-        requests[i].onload = function () {
-            loadRequest(this);
-        };
+        for (j = 0; j < locale.length; j++) {
+            requests[requestCounter] = new XMLHttpRequest();
+            let requestAPI = 'https://support.mozilla.org/api/2/question/?format=json&ordering=-id&is_solved=' + is_solved + '&is_spam=' + is_spam + '&is_locked=' + is_locked + '&product=' + product[i] + '&is_taken=' + is_taken + '&is_archived=' + is_archived + '&locale=' + locale[j] + '&num_answers=' + max_answers;
+            requests[requestCounter].open('GET', requestAPI, true);
+            requests[requestCounter].responseType = 'json';
+            requests[requestCounter].send();
+            requests[requestCounter].onload = function () {
+                loadRequest(this);
+            };
+            requestCounter++;
+        }
     }
 
-    // If the user doesn't have any products selected
-    if (product.length < 1) {
+    // If the user doesn't have any products or locales selected
+    if (product.length < 1 || locale.length < 1) {
         browser.runtime.sendMessage({
             task: 'no_api_call'
         });
         questionList = [];
+        browser.storage.local.set({
+            'questions': questionList
+        });
         updateQuestionCount();
     }
 }
@@ -273,52 +321,46 @@ function callAPI() {
  */
 function loadRequest(request) {
     // Check if this is the final pending API request
-    let isFinishedLoading;
     numberOfAPIRequests--;
-    if (numberOfAPIRequests <= 0) {
-        isFinishedLoading = true;
-    } else {
-        isFinishedLoading = false;
-    }
+    const isFinishedLoading = numberOfAPIRequests <= 0;
 
-    let responseSUMO = request.response;
-    let newQuestionList = [];
+    const responseSUMO = request.response;
+    const newQuestionList = [];
 
-    for (i = 0; i < responseSUMO.results.length; i++) {
-        // Check if question should be shown on the question list
-        if (responseSUMO.results[i].num_answers == 0 &&
-            responseSUMO.results[i].is_spam == false &&
-            responseSUMO.results[i].is_locked == false &&
-            isWithinTimeRange(responseSUMO.results[i].created)) {
-            let qID = responseSUMO.results[i].id;
-            let qTitle = responseSUMO.results[i].title;
-            let qLocale = responseSUMO.results[i].locale;
-            let qProduct = responseSUMO.results[i].product;
-            let x = 0;
-            let questionExists = false;
+    const validProducts = product.map(p => p.toLowerCase());
+    const validLocales = locale.map(l => l.toLowerCase());
 
-            // Check if question is already on the question list
-            while (x < questionList.length && !questionExists) {
-                questionExists = (qID == questionList[x].id);
-                x++;
-            }
+    // Filter SUMO list to only unanswered
+    const availableQuestions = responseSUMO.results.filter((q) => {
+        return (
+            validProducts.includes(q.product.toLowerCase()) &&
+            validLocales.includes(q.locale.toLowerCase()) &&
+            q.num_answers == 0 &&
+            q.is_spam == false &&
+            q.is_locked == false &&
+            isWithinTimeRange(q.created)
+        );
+    });
 
-            // Add to the question list (if needed)
-            if (!questionExists) {
-                let newItem = {
-                    product: qProduct,
-                    title: qTitle,
-                    id: qID,
-                    locale: qLocale,
-                    new: true
-                }
-                newQuestionList.push(newItem);
-            }
+    // Add question to new list if it's not already saved
+    for (question of availableQuestions) {
+        const listIndex = questionList.findIndex((q) => { return q.id == question.id; });
+
+        if (listIndex < 0) {
+            newQuestionList.push({
+                product: question.product,
+                title: question.title,
+                id: question.id,
+                locale: question.locale,
+                created: question.created,
+                show: true,
+                new: true
+            });
         }
     }
 
     // Clean and save question list in Storage API
-    removeOld(responseSUMO.results, responseSUMO.results[0].product);
+    if (responseSUMO.results.length > 0) removeOld(responseSUMO.results, responseSUMO.results[0].product, responseSUMO.results[0].locale);
     questionList = newQuestionList.concat(questionList);
     browser.storage.local.set({
         'questions': questionList
@@ -356,8 +398,8 @@ function updateQuestionCount() {
     let numberOfQuestionsOpened = 0;
 
     // Count new questions
-    for (var i = 0; i < questionList.length; i++) {
-        if (questionList[i].new) {
+    for (let i = 0; i < questionList.length; i++) {
+        if (questionList[i].new && questionList[i].show) {
             numberOfQuestionsOpened++;
         }
     }
@@ -367,9 +409,15 @@ function updateQuestionCount() {
         browser.browserAction.setBadgeText({
             text: numberOfQuestionsOpened.toString()
         });
+        browser.sidebarAction.setTitle({
+            title: browser.i18n.getMessage('extensionName') + ' (' + numberOfQuestionsOpened + ')'
+        });
     } else {
         browser.browserAction.setBadgeText({
             text: ''
+        });
+        browser.sidebarAction.setTitle({
+            title: browser.i18n.getMessage('extensionName')
         });
     }
 
@@ -394,48 +442,48 @@ function updateQuestionCount() {
  * @param {Array} list
  * @param {string} prod Current product list to check
  */
-function removeOld(questions, productToCheck) {
+function removeOld(questions, productToCheck, localeToCheck) {
     // Convert watch list to lowercase
-    let productList = product.map(function (value) {
-        return value.toLowerCase();
-    });
+    const productList = product.map((v) => { return v.toLowerCase(); });
+    const localeList = locale.map((v) => { return v.toLowerCase(); });
+    const validList = [];
+    const removeList = [];
 
-    let i = 0;
-    while (i < questionList.length) {
-        let x = 0;
-        let found = false;
-        let skip = false;
-        let matchesList = (questionList[i].product.toLowerCase() == productToCheck);
-        let isPossible = productList.includes(questionList[i].product.toLowerCase());
+    // Check each question stored in the question list
+    for (question of questionList) {
+        const inScope = question.product.toLowerCase() == productToCheck.toLowerCase() && question.locale.toLowerCase() == localeToCheck.toLowerCase();
+        const isPossible = productList.includes(question.product.toLowerCase()) && localeList.includes(question.locale.toLowerCase());
+        const found = questions.find((q) => { return question.id == q.id });
+        const onList = found != undefined;
+        const isExpired = !isWithinTimeRange(question.created);
+        const isTaken = !(
+            onList &&
+            found.num_answers == 0 &&
+            found.is_locked == false &&
+            found.is_spam == false
+        );
 
-        // Question is for a product on the watch list, but not for the product currently being checked (keep the question in the list)
-        if (isPossible && !matchesList) {
-            found = true;
+        // Remove questions from UI
+        if (!((!inScope && isPossible) || (isPossible && onList && !isExpired && !isTaken))) {
+            question.show = false;
+            removeList.push(question);
         }
 
-        // Check if question is still on list
-        while (x < questions.length && !found && matchesList) {
-            if (questionList[i].id == questions[x].id &&
-                questions[x].num_answers == 0 &&
-                questions[x].is_locked == false &&
-                questions[x].is_spam == false &&
-                isWithinTimeRange(questions[x].created)) {
-                found = true;
-            }
-            x++;
-        }
-
-        // Remove from question list (if not valid)
-        if (!found || !isPossible) {
-            browser.runtime.sendMessage({
-                task: 'remove_question',
-                id: questionList[i].id
-            });
-            questionList.splice(i, 1);
-        } else {
-            i++;
+        // Keep questions in Storage API
+        if ((!inScope && isPossible) || (isPossible && !isExpired)) {
+            validList.push(question);
         }
     }
+
+    // Trigger question removal
+    for (question of removeList) {
+        browser.runtime.sendMessage({
+            task: 'remove_question',
+            id: question.id
+        });
+    }
+
+    questionList = validList;
 
     // Sort question list by ID
     questionList.sort(function (a, b) {
@@ -466,12 +514,13 @@ function updateQuestionList() {
  * @returns {boolean}
  */
 function isWithinTimeRange(timeString) {
-    let timeLimit = 24;                                               // In hours
+    const timeLimit = 24;                                             // In hours
     let currentTime = new Date();
-    let timezone = currentTime.getTimezoneOffset() * 60 * 1000;       // Must manually remove the timezone offset
+    const timezone = currentTime.getTimezoneOffset() * 60 * 1000;     // Must manually remove the timezone offset
     currentTime = new Date(currentTime - timezone);                   // because SUMO API displays a local timestamp, but labels it UTC
-    let minimumTime = currentTime.getTime() - (timeLimit * 3600000);
-    let questionTime = new Date(timeString).getTime();
+    const minimumTime = currentTime.getTime() - (timeLimit * 3600000);
+    const questionTime = new Date(timeString).getTime();
+
     return questionTime >= minimumTime;
 }
 
@@ -480,7 +529,7 @@ function isWithinTimeRange(timeString) {
  * @param {Array} questions
  */
 function showNotification(questions) {
-    let num = questions.length;
+    const num = questions.length;
     let title = num + ' ';
     let message = '"' + questions[0].title + '"';
 
@@ -506,20 +555,11 @@ function showNotification(questions) {
  * @param {number} id
  */
 function markAsRead(id) {
-    let i = 0;
-    let found = false;
-
-    // Find index of question
-    while (i < questionList.length && !found) {
-        if (questionList[i].id == id) {
-            found = true;
-        }
-        i++;
-    }
-    i--;
+    // Find question in list
+    const index = questionList.findIndex((q) => { return q.id == id; });
 
     // Update question status
-    questionList[i].new = false;
+    questionList[index].new = false;
     browser.storage.local.set({
         'questions': questionList
     });

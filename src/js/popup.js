@@ -30,6 +30,7 @@ window.oncontextmenu = function(event) {
 
 // Is it Android
 let isMobile = false;
+let inNewTab = true;
 
 // Adjust UI
 isSidebar();
@@ -62,9 +63,21 @@ function openSidebar(event) {
 
 /**
  * Open question
+ * @async
  * @param {object} question Question item button
  */
-function openQuestion(question) {
+async function openQuestion(question) {
+    question.preventDefault();
+    question.stopPropagation();
+
+    const url = question.target.href;
+    if (!url) return;
+    let tabID = await browser.tabs.query({ active: true });
+    tabID = tabID[0].id;
+
+    if (inNewTab) browser.tabs.create({ url: url });
+    else browser.tabs.update(tabID, { url: url });
+
     let selectedQuestion = null;
     
     if (question.target.id) {
@@ -109,6 +122,12 @@ function handleMessage(message) {
             questionList = [];
             addQuestions([], true);
             return;
+        case 'toggle_locale_labels':
+            showLocaleLabels(message.multiple);
+            return;
+        case 'update_open_in_new_tab':
+            inNewTab = message.value;
+            return;
     }
 }
 
@@ -118,21 +137,14 @@ function handleMessage(message) {
  */
 function dataLoaded(data) {
     setCurrentTheme(data.chooseTheme);
+    showLocaleLabels(data.chooseLanguage.length != 1);
     
     questionList = data.questions;
+    inNewTab = data.openNewTab;
 
-    for (i = 0; i < questionList.length; i++) {
-        createQuestionUI(
-            questionList[i].product.toLowerCase(),
-            questionList[i].title,
-            questionList[i].id,
-            data.chooseLanguage,
-            questionList[i].new
-        );
-    }
-
-    toggleQuestionList();
-    document.getElementById('page-loader').style.display = 'none';
+    addQuestions(questionList, false);
+    
+    showLoadingWheel(false);
     callAPI();
 }
 
@@ -144,13 +156,10 @@ function setCurrentTheme(theme) {
     document.body.classList.remove('theme-dark', 'theme-light');
 
     if (theme == 'auto') {
-        let isSystemThemeDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        let isSystemThemeLight = window.matchMedia('(prefers-color-scheme: light)').matches;
+        const isSystemThemeDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
 
         if (isSystemThemeDark == true) {
             document.body.classList.add('theme-dark');
-        } else if (isSystemThemeLight == true) {
-            document.body.classList.add('theme-light');
         } else {
             document.body.classList.add('theme-light');
         }
@@ -181,20 +190,24 @@ function callAPI(event) {
  * @param {boolean} isFinishedLoading
  */
 function addQuestions(questions, isFinishedLoading) {
-    for (i = 0; i < questions.length; i++) {
-        createQuestionUI(
-            questions[i].product,
-            questions[i].title,
-            questions[i].id,
-            questions[i].locale,
-            true
-        );
+    // Create questions on the UI
+    for (question of questions) {
+        if (question.show && document.getElementsByClassName('item--' + question.id)[0] == undefined) {
+            createQuestionUI(
+                question.product,
+                question.title,
+                question.id,
+                question.locale,
+                question.new
+            );
+        }
     }
 
     toggleQuestionList();
 
     if (isFinishedLoading) {
         showLoadingBar(false);
+        showLoadingWheel(false);
     }
 }
 
@@ -207,12 +220,13 @@ function addQuestions(questions, isFinishedLoading) {
  */
 function createQuestionUI(product, title, id, locale, isNew) {
     // Create UI elements
-    let list = document.getElementById('items');
-    let item = questionTemplate.cloneNode(true);
-    let productIcon = item.getElementsByClassName('item__icon')[0];
-    let questionTitle = item.getElementsByClassName('item__title')[0];
-    let button = item.getElementsByClassName('item__link')[0];
-    let url = 'https://support.mozilla.org/' + locale + '/questions/' + id;
+    const list = document.getElementById('items');
+    const item = questionTemplate.cloneNode(true);
+    const productIcon = item.getElementsByClassName('item__icon')[0];
+    const productLocale = item.getElementsByClassName('item__locale')[0];
+    const questionTitle = item.getElementsByClassName('item__title')[0];
+    const button = item.getElementsByClassName('item__link')[0];
+    const url = 'https://support.mozilla.org/' + locale + '/questions/' + id;
 
     // Add item ID
     item.className = 'item--' + id;
@@ -226,15 +240,20 @@ function createQuestionUI(product, title, id, locale, isNew) {
     productIcon.src = '../res/products/' + product + '.png';
     productIcon.title = browser.i18n.getMessage('product_' + product);
 
+    // Add question locale
+    productLocale.textContent = locale.substring(0, 2).toUpperCase();
+    productLocale.classList.add(locale);
+
     // Add question title
     questionTitle.textContent = title;
 
     // Add question button
     button.id = id;
     button.href = url;
+    button.addEventListener('click', openQuestion);
 
     // Determine question order
-    let allButtons = list.getElementsByClassName('button');
+    const allButtons = list.getElementsByClassName('button');
     let i = 0;
     while (allButtons[i] && allButtons[i].id > id) {
         i++;
@@ -256,7 +275,7 @@ function createQuestionUI(product, title, id, locale, isNew) {
  * Show question list if there are questions to display
  */
 function toggleQuestionList() {
-    let empty = document.getElementById('empty');
+    const empty = document.getElementById('empty');
 
     if (questionList.length > 0) {
         questionListUI.style.display = 'block';
@@ -264,6 +283,18 @@ function toggleQuestionList() {
     } else {
         questionListUI.style.display = 'none';
         empty.style.display = 'block';
+    }
+}
+
+/**
+ * Show/Hide locale labels on question list
+ * @param {boolean} show 
+ */
+function showLocaleLabels(show) {
+    if (show) {
+        questionListUI.classList.remove('one-locale');
+    } else {
+        questionListUI.classList.add('one-locale');
     }
 }
 
@@ -280,13 +311,14 @@ function markAsRead(id) {
  * @async
  * @param {Object} event
  */
-async function markAllAsRead(event) {
+function markAllAsRead(event) {
     event.preventDefault();
     event.stopPropagation();
-    for (i = 0; i < questionList.length; i++) {
-        await browser.runtime.sendMessage({
+
+    for (question of questionList) {
+        browser.runtime.sendMessage({
             task: 'mark_as_read',
-            id: questionList[i].id
+            id: question.id
         });
     }
 }
@@ -296,8 +328,8 @@ async function markAllAsRead(event) {
  * @param {number} id
  */
 function removeQuestion(id) {
-    let question = document.getElementsByClassName('item--' + id)[0];
-    question.parentElement.removeChild(question);
+    const question = document.getElementsByClassName('item--' + id)[0];
+    if (question) question.parentElement.removeChild(question);
 }
 
 /**
@@ -314,6 +346,7 @@ function isSidebar() {
         document.body.classList.add('mobile');
     } else {
         document.body.classList.add('sidebar');
+        browser.runtime.connect();
         return true;
     }
 }
@@ -323,11 +356,19 @@ function isSidebar() {
  * @param {boolean} state
  */
 function showLoadingBar(state) {
-    let load = document.getElementById('load');
+    const load = document.getElementById('load');
 
     if (state) {
         load.style.opacity = '1';
     } else {
         load.style.opacity = '0';
+    }
+}
+
+function showLoadingWheel(state) {
+    const load = document.getElementById('page-loader');
+
+    if (!state) {
+        load.style.display = 'none';
     }
 }

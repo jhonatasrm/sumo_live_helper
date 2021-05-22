@@ -10,6 +10,15 @@
     padding-top: 0 !important;
 }
 
+#empty {
+    min-width: 500px;
+}
+
+.sidebar #empty,
+.mobile #empty {
+    min-width: unset !important;
+}
+
 #popup.mobile {
     grid-template-areas:
         'main   main   main'
@@ -95,9 +104,19 @@
     display: none;
 }
 
-html, body {
+html {
     height: 100%;
-    overflow: hidden;
+}
+
+#empty h1,
+#empty h3 {
+    text-align: center;
+}
+
+#empty img {
+    width: 75%;
+    margin: 1em auto;
+    display: block;
 }
 
 @media (max-width: 300px) {
@@ -125,9 +144,4 @@ html, body {
     .sidebar #items li div:last-child a span {
         display: none;
     }
-}
-
-.hide-scroll-bar {
-    height: 100%;
-    overflow: hidden scroll;
 }
